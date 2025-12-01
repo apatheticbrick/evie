@@ -17,7 +17,7 @@ const TaskCard = ({ task, onComplete, onUncomplete, isCompleted, onEdit }: {
         const created = task.id;
         const diff = now - created;
 
-        const seconds = Math.floor(diff / 1000)
+        const seconds = Math.floor(diff / 1000);
         const minutes = Math.floor(seconds / 60);
         const hours = Math.floor(minutes / 60);
         const days = Math.floor(hours / 24);
@@ -64,12 +64,12 @@ const TaskCard = ({ task, onComplete, onUncomplete, isCompleted, onEdit }: {
     }
   }, [task.id, isCompleted]);
 
-  const handleCompleteClick = (e) => {
+  const handleCompleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     onComplete(task.id);
   };
 
-  const handleUncompleteClick = (e) => {
+  const handleUncompleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     onUncomplete(task.id);
   };

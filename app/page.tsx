@@ -8,11 +8,25 @@ class Task {
   id: number;
   title: string;
   body: string;
+  isRecurring: boolean;
+  recurrenceDays: number; // e.g., 7 for weekly, 1 for daily, 30 for monthly
+  lastPingTimestamp: number; // The timestamp of the last time a Discord ping was sent
 
-  constructor(id: number, title: string, body: string) {
+  constructor(
+    id: number,
+    title: string,
+    body: string,
+    isRecurring: boolean = false,
+    recurrenceDays: number = 0,
+    lastPingTimestamp: number = 0 // Initialized to 0 or the task's creation ID
+  ) {
     this.id = id;
     this.title = title;
     this.body = body;
+    // New fields
+    this.isRecurring = isRecurring;
+    this.recurrenceDays = recurrenceDays;
+    this.lastPingTimestamp = lastPingTimestamp || id; // Set last ping to task creation time
   }
 }
 
@@ -24,17 +38,34 @@ const App = () => {
   const [draftBodyText, setDraftBodyText] = useState('');
   const [draftTitle, setDraftTitle] = useState('');
   const [showCompletedTasks, setShowCompletedTasks] = useState(false);
-  const [editingTask, setEditingTask] = useState(null);
-  const [toasts, setToasts] = useState([]);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [toasts, setToasts] = useState<Array<{id: number; title: string; message: string; type: string; isFadingOut: boolean}>>([]);
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurrenceDays, setRecurrenceDays] = useState(7);
 
-  const [tasks, setTasks] = useState({ "tasks": [] });
-  const [completedTasks, setCompletedTasks] = useState({ "tasks": [] });
+  const [tasks, setTasks] = useState<{tasks: Task[]}>({ "tasks": [] });
+  const [completedTasks, setCompletedTasks] = useState<{tasks: Task[]}>({ "tasks": [] });
 
   // Use useEffect to load data from localStorage on the client
   useEffect(() => {
     const savedTasks = localStorage.getItem("tasks");
     if (savedTasks) {
-      setTasks(JSON.parse(savedTasks));
+      const parsedTasks = JSON.parse(savedTasks);
+      setTasks(parsedTasks);
+      // Sync recurring tasks after loading
+      const savedCompletedTasks = localStorage.getItem("completedTasks");
+      const parsedCompletedTasks = savedCompletedTasks ? JSON.parse(savedCompletedTasks) : { tasks: [] };
+      const allTasks = [...parsedTasks.tasks, ...parsedCompletedTasks.tasks];
+      const recurringTasks = allTasks.filter((task: Task) => task.isRecurring);
+      if (recurringTasks.length > 0) {
+        fetch('/api/tasks', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ tasks: recurringTasks }),
+        }).catch(error => console.error('Error syncing recurring tasks on load:', error));
+      }
     }
     const savedCompletedTasks = localStorage.getItem("completedTasks");
     if (savedCompletedTasks) {
@@ -52,6 +83,8 @@ const App = () => {
     setShowModal(false);
     setDraftTitle('');
     setDraftBodyText('');
+    setIsRecurring(false);
+    setRecurrenceDays(7);
     // Clear the text when closing
   };
 
@@ -100,16 +133,46 @@ const App = () => {
     }
   };
 
+  //Sync recurring tasks to the server
+  const syncRecurringTasksToServer = React.useCallback(async () => {
+    try {
+      const allTasks = [...tasks.tasks, ...completedTasks.tasks];
+      const recurringTasks = allTasks.filter(task => task.isRecurring);
+      if (recurringTasks.length > 0) {
+        await fetch('/api/tasks', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ tasks: recurringTasks }),
+        });
+      }
+    } catch (error) {
+      console.error('Error syncing recurring tasks:', error);
+    }
+  }, [tasks.tasks, completedTasks.tasks]);
+
   //Ping the discord API, then add the new task to the task dictionary, then close the modal.
   const handleAddTask = () => {
     console.log("handleAddTask")
     if (draftTitle.trim() !== '') {
       sendDiscordMessage(`Evie just added the task: "${draftTitle}"`);
       const newID = Date.now()
-      const newTask = new Task(newID, draftTitle, draftBodyText)
+      const newTask = new Task(
+        newID, 
+        draftTitle, 
+        draftBodyText,
+        isRecurring,
+        isRecurring ? recurrenceDays : 0,
+        newID // Set lastPingTimestamp to creation time
+      )
       setTasks({"tasks": [...tasks.tasks, newTask]});
       // setTasks({"tasks": tasks.tasks, newTask});
       handleCloseModal();
+      // Sync recurring tasks to server if this is a recurring task
+      if (isRecurring) {
+        setTimeout(() => syncRecurringTasksToServer(), 100);
+      }
     } else if (draftBodyText == '') {
       handleCloseModal();
       //if no title or body text, close window instead
@@ -132,27 +195,27 @@ const App = () => {
   };
 
   //Remove the task from the tasks and add it to completed task, then ping the API to send a message to the discord.
-  const handleCompleteTask = (id) => {
+  const handleCompleteTask = (id: number) => {
     const taskToComplete = tasks.tasks.find(task => task.id === id);
     if (taskToComplete) {
       setTasks({ "tasks": tasks.tasks.filter(task => task.id !== id) });
       setCompletedTasks({ "tasks": [...completedTasks.tasks, taskToComplete] });
+      sendDiscordMessage(`Evie just completed: "${taskToComplete.title}"!`);
     }
-    sendDiscordMessage(`Evie just completed: "${taskToComplete.title}"!`);
   };
 
   //Remove the task from completed tasks, add it to tasks, then ping the API.
-  const handleUncompleteTask = (id) => {
+  const handleUncompleteTask = (id: number) => {
     const taskToUncomplete = completedTasks.tasks.find(task => task.id === id);
     if (taskToUncomplete) {
       setCompletedTasks({ "tasks": completedTasks.tasks.filter(task => task.id !== id) });
       setTasks({ "tasks": [...tasks.tasks, taskToUncomplete] });
-    sendDiscordMessage(`Evie just added the task: ${taskToUncomplete.title}`);
+      sendDiscordMessage(`Evie just added the task: ${taskToUncomplete.title}`);
     }
   };
 
   //Set the task to edit mode, fill in the title and body text with the text from that task, then show the edit modal
-  const handleEditTask = (id) => {
+  const handleEditTask = (id: number) => {
     const taskToEdit = tasks.tasks.find(task => task.id === id);
     if (taskToEdit) {
       setEditingTask(taskToEdit);
@@ -168,7 +231,7 @@ const App = () => {
   };
 
   //send a POST request to the backend with the message, then report any errors to the browser console, as well as adding a toast if there is an error.
-  const sendDiscordMessage = async (message) => {
+  const sendDiscordMessage = async (message: string) => {
     try {
       console.log("sendDiscordMessage");
       const response = await fetch('/api/sendMessage', {
@@ -187,12 +250,12 @@ const App = () => {
       }
     } catch (error) {
       console.error('Network or server error:', error);
-      addToast('Network or server error', error, 'error');
+      addToast('Network or server error', String(error), 'error');
     }
   };
 
   //add a toast with the necessary info, then start the timer to make it disappear (for some reason this doesn't fully work yet idk why)
-  const addToast = (title, message, type = 'info') => {
+  const addToast = (title: string, message: string, type: string = 'info') => {
     const id = Date.now();
     const newToast = { id, title, message, type, isFadingOut: false };
     setToasts((prevToasts) => [...prevToasts, newToast]);
@@ -213,7 +276,7 @@ const App = () => {
   };
 
   //defines the toast object and the HTML it should output
-  const Toast = ({ title, message, type, isFadingOut }) => {
+  const Toast = ({ title, message, type, isFadingOut }: {title: string; message: string; type: string; isFadingOut: boolean}) => {
     const className = `toast toast--${type} ${isFadingOut ? 'fading-out' : ''}`;
     return (
       <div className={className} role="alert">
@@ -236,11 +299,13 @@ const App = () => {
   useEffect(() => {
     localStorage.setItem('tasks', JSON.stringify(tasks));
     localStorage.setItem('completedTasks', JSON.stringify(completedTasks));
-  }, [tasks, completedTasks]);
+    // Sync recurring tasks to server whenever tasks change
+    syncRecurringTasksToServer();
+  }, [tasks, completedTasks, syncRecurringTasksToServer]);
 
   //manage some basic keyboard shortcuts
   useEffect(() => {
-    const handleKeyDown = (event) => {
+    const handleKeyDown = (event: KeyboardEvent) => {
       //Escape should close the current modal
       if (event.key === 'Escape') {
         console.log("escape key detected")
@@ -313,9 +378,36 @@ const App = () => {
                 value={draftBodyText}
                 onChange={(e) => setDraftBodyText(e.target.value)}
                 placeholder="Start typing a description (optional)..."
-                rows="8"
+                rows={8}
                 className="input-body"
               />
+              <div className="recurring-task-section">
+                <label className="recurring-checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={isRecurring}
+                    onChange={(e) => setIsRecurring(e.target.checked)}
+                    className="recurring-checkbox"
+                  />
+                  <span>Make this task recurring</span>
+                </label>
+                {isRecurring && (
+                  <div className="recurrence-input-container">
+                    <label htmlFor="recurrence-days" className="recurrence-label">
+                      Repeat every:
+                    </label>
+                    <input
+                      id="recurrence-days"
+                      type="number"
+                      min="1"
+                      value={recurrenceDays}
+                      onChange={(e) => setRecurrenceDays(Math.max(1, parseInt(e.target.value) || 1))}
+                      className="recurrence-days-input"
+                    />
+                    <span className="recurrence-days-label">days</span>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="modal-footer">
               <button className="general-button" onClick={handleAddTask}>Save</button>
@@ -348,7 +440,7 @@ const App = () => {
                 value={draftBodyText}
                 onChange={(e) => setDraftBodyText(e.target.value)}
                 placeholder="Start typing a description (optional)..."
-                rows="8"
+                rows={8}
                 className="input-body"
               />
             </div>
@@ -389,6 +481,7 @@ const App = () => {
                   key={task.id}
                   task={task}
                   onComplete={handleCompleteTask}
+                  onUncomplete={handleUncompleteTask}
                   onEdit={() => handleEditTask(task.id)}
                   isCompleted={false}
                 />
@@ -414,7 +507,9 @@ const App = () => {
                 <TaskCard
                   key={task.id}
                   task={task}
+                  onComplete={handleCompleteTask}
                   onUncomplete={handleUncompleteTask}
+                  onEdit={() => handleEditTask(task.id)}
                   isCompleted={true}
                 />
               ))}
