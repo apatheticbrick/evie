@@ -11,6 +11,7 @@ class Task {
   isRecurring: boolean;
   recurrenceDays: number; // e.g., 7 for weekly, 1 for daily, 30 for monthly
   lastPingTimestamp: number; // The timestamp of the last time a Discord ping was sent
+  checkedUntil: number; // Timestamp until which this recurring task is checked off (0 if not checked)
 
   constructor(
     id: number,
@@ -18,7 +19,8 @@ class Task {
     body: string,
     isRecurring: boolean = false,
     recurrenceDays: number = 0,
-    lastPingTimestamp: number = 0 // Initialized to 0 or the task's creation ID
+    lastPingTimestamp: number = 0, // Initialized to 0 or the task's creation ID
+    checkedUntil: number = 0 // Timestamp until which task is checked off
   ) {
     this.id = id;
     this.title = title;
@@ -27,6 +29,7 @@ class Task {
     this.isRecurring = isRecurring;
     this.recurrenceDays = recurrenceDays;
     this.lastPingTimestamp = lastPingTimestamp || id; // Set last ping to task creation time
+    this.checkedUntil = checkedUntil || 0;
   }
 }
 
@@ -42,6 +45,8 @@ const App = () => {
   const [toasts, setToasts] = useState<Array<{id: number; title: string; message: string; type: string; isFadingOut: boolean}>>([]);
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurrenceDays, setRecurrenceDays] = useState(7);
+  const [editIsRecurring, setEditIsRecurring] = useState(false);
+  const [editRecurrenceDays, setEditRecurrenceDays] = useState(7);
 
   const [tasks, setTasks] = useState<{tasks: Task[]}>({ "tasks": [] });
   const [completedTasks, setCompletedTasks] = useState<{tasks: Task[]}>({ "tasks": [] });
@@ -109,6 +114,8 @@ const App = () => {
     setDraftTitle('');
     setDraftBodyText('');
     setEditingTask(null);
+    setEditIsRecurring(false);
+    setEditRecurrenceDays(7);
   }
 
   const handleConfirmModalCancel = () => {
@@ -164,7 +171,8 @@ const App = () => {
         draftBodyText,
         isRecurring,
         isRecurring ? recurrenceDays : 0,
-        newID // Set lastPingTimestamp to creation time
+        newID, // Set lastPingTimestamp to creation time
+        0 // checkedUntil starts at 0
       )
       setTasks({"tasks": [...tasks.tasks, newTask]});
       // setTasks({"tasks": tasks.tasks, newTask});
@@ -184,8 +192,16 @@ const App = () => {
   //replace the old task with the new one, then close the edit modal.
   const handleUpdateTask = () => {
     if (draftTitle.trim() !== '' && editingTask) {
+      const updatedTask = {
+        ...editingTask,
+        title: draftTitle,
+        body: draftBodyText,
+        isRecurring: editIsRecurring,
+        recurrenceDays: editIsRecurring ? editRecurrenceDays : 0,
+        checkedUntil: editIsRecurring ? editingTask.checkedUntil : 0
+      };
       const updatedTasks = tasks.tasks.map(task => 
-        task.id === editingTask.id ? { ...task, title: draftTitle, body: draftBodyText } : task
+        task.id === editingTask.id ? updatedTask : task
       );
       setTasks({"tasks": updatedTasks});
       handleCloseEditModal();
@@ -194,10 +210,48 @@ const App = () => {
     }
   };
 
+  //Check off a recurring task for this interval (stays in current tasks, gets grayed out)
+  const handleCheckOffRecurringTask = (id: number) => {
+    const taskToCheck = tasks.tasks.find(task => task.id === id);
+    if (taskToCheck && taskToCheck.isRecurring) {
+      const now = Date.now();
+      const checkedUntil = now + (taskToCheck.recurrenceDays * 24 * 60 * 60 * 1000);
+      const updatedTask = { ...taskToCheck, checkedUntil };
+      const updatedTasks = tasks.tasks.map(task => 
+        task.id === id ? updatedTask : task
+      );
+      setTasks({ "tasks": updatedTasks });
+      sendDiscordMessage(`Evie checked off recurring task: "${taskToCheck.title}" for this interval!`);
+    }
+  };
+
+  //Cancel recurring status on a task (makes it a one-time task)
+  const handleCancelRecurring = (id: number) => {
+    const taskToUpdate = tasks.tasks.find(task => task.id === id);
+    if (taskToUpdate && taskToUpdate.isRecurring) {
+      const updatedTask = { 
+        ...taskToUpdate, 
+        isRecurring: false, 
+        recurrenceDays: 0,
+        checkedUntil: 0
+      };
+      const updatedTasks = tasks.tasks.map(task => 
+        task.id === id ? updatedTask : task
+      );
+      setTasks({ "tasks": updatedTasks });
+      sendDiscordMessage(`Evie canceled recurring status for: "${taskToUpdate.title}"`);
+    }
+  };
+
   //Remove the task from the tasks and add it to completed task, then ping the API to send a message to the discord.
   const handleCompleteTask = (id: number) => {
     const taskToComplete = tasks.tasks.find(task => task.id === id);
     if (taskToComplete) {
+      // If it's a recurring task, don't complete it - use check off instead
+      if (taskToComplete.isRecurring) {
+        handleCheckOffRecurringTask(id);
+        return;
+      }
       setTasks({ "tasks": tasks.tasks.filter(task => task.id !== id) });
       setCompletedTasks({ "tasks": [...completedTasks.tasks, taskToComplete] });
       sendDiscordMessage(`Evie just completed: "${taskToComplete.title}"!`);
@@ -221,6 +275,8 @@ const App = () => {
       setEditingTask(taskToEdit);
       setDraftTitle(taskToEdit.title);
       setDraftBodyText(taskToEdit.body);
+      setEditIsRecurring(taskToEdit.isRecurring);
+      setEditRecurrenceDays(taskToEdit.isRecurring ? taskToEdit.recurrenceDays : 7);
       handleOpenEditModal();
     }
   };
@@ -294,6 +350,31 @@ const App = () => {
       ))}
     </div>
   );
+
+  // Reset checked-off recurring tasks when their interval expires
+  useEffect(() => {
+    const checkInterval = setInterval(() => {
+      const now = Date.now();
+      const updatedTasks = tasks.tasks.map(task => {
+        if (task.isRecurring && task.checkedUntil > 0 && now >= task.checkedUntil) {
+          // Interval has passed, reset the checked state
+          return { ...task, checkedUntil: 0 };
+        }
+        return task;
+      });
+      
+      // Only update if something changed
+      const hasChanges = updatedTasks.some((task, index) => 
+        task.checkedUntil !== tasks.tasks[index]?.checkedUntil
+      );
+      
+      if (hasChanges) {
+        setTasks({ "tasks": updatedTasks });
+      }
+    }, 60000); // Check every minute
+
+    return () => clearInterval(checkInterval);
+  }, [tasks.tasks]);
 
   //localStorage should update every time the task or completed task dictionaries are updated
   useEffect(() => {
@@ -443,6 +524,33 @@ const App = () => {
                 rows={8}
                 className="input-body"
               />
+              <div className="recurring-task-section">
+                <label className="recurring-checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={editIsRecurring}
+                    onChange={(e) => setEditIsRecurring(e.target.checked)}
+                    className="recurring-checkbox"
+                  />
+                  <span>Make this task recurring</span>
+                </label>
+                {editIsRecurring && (
+                  <div className="recurrence-input-container">
+                    <label htmlFor="edit-recurrence-days" className="recurrence-label">
+                      Repeat every:
+                    </label>
+                    <input
+                      id="edit-recurrence-days"
+                      type="number"
+                      min="1"
+                      value={editRecurrenceDays}
+                      onChange={(e) => setEditRecurrenceDays(Math.max(1, parseInt(e.target.value) || 1))}
+                      className="recurrence-days-input"
+                    />
+                    <span className="recurrence-days-label">days</span>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="modal-footer">
               <button className="general-button" onClick={handleUpdateTask}>Update</button>
@@ -483,6 +591,7 @@ const App = () => {
                   onComplete={handleCompleteTask}
                   onUncomplete={handleUncompleteTask}
                   onEdit={() => handleEditTask(task.id)}
+                  onCancelRecurring={handleCancelRecurring}
                   isCompleted={false}
                 />
               ))}
@@ -510,6 +619,7 @@ const App = () => {
                   onComplete={handleCompleteTask}
                   onUncomplete={handleUncompleteTask}
                   onEdit={() => handleEditTask(task.id)}
+                  onCancelRecurring={handleCancelRecurring}
                   isCompleted={true}
                 />
               ))}

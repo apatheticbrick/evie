@@ -2,7 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { REST } from '@discordjs/rest';
-import fs from 'fs';
+import { promises as fs } from 'fs';
 import path from 'path';
 
 // Use /tmp for Vercel compatibility (writable directory)
@@ -15,44 +15,47 @@ interface RecurringTask {
   isRecurring: boolean;
   recurrenceDays: number;
   lastPingTimestamp: number;
+  checkedUntil: number;
 }
 
 // Helper function to read tasks from file
-function readTasksFromFile(): RecurringTask[] {
+async function readTasksFromFile(): Promise<RecurringTask[]> {
   try {
-    if (fs.existsSync(TASKS_FILE)) {
-      const data = fs.readFileSync(TASKS_FILE, 'utf-8');
-      const parsed = JSON.parse(data);
-      return parsed.tasks || [];
-    }
+    await fs.access(TASKS_FILE);
+    const data = await fs.readFile(TASKS_FILE, 'utf-8');
+    const parsed = JSON.parse(data);
+    return parsed.tasks || [];
   } catch (error) {
-    console.error('[Cron] Error reading tasks file:', error);
+    // File doesn't exist or can't be read - return empty array
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error('[Cron] Error reading tasks file:', error);
+    }
+    return [];
   }
-  return [];
 }
 
 // Helper function to write tasks to file
-function writeTasksToFile(tasks: RecurringTask[]): void {
+async function writeTasksToFile(tasks: RecurringTask[]): Promise<void> {
   try {
-    fs.writeFileSync(TASKS_FILE, JSON.stringify({ tasks }, null, 2), 'utf-8');
+    await fs.writeFile(TASKS_FILE, JSON.stringify({ tasks }, null, 2), 'utf-8');
   } catch (error) {
     console.error('[Cron] Error writing tasks file:', error);
   }
 }
 
 async function getRecurringTasksFromDB(): Promise<RecurringTask[]> {
-    const allTasks = readTasksFromFile();
+    const allTasks = await readTasksFromFile();
     return allTasks.filter(task => task.isRecurring);
 }
 
 async function updateLastPingTimestamp(taskId: number, newTimestamp: number) {
-    const tasks = readTasksFromFile();
+    const tasks = await readTasksFromFile();
     const updatedTasks = tasks.map(task => 
       task.id === taskId 
         ? { ...task, lastPingTimestamp: newTimestamp } 
         : task
     );
-    writeTasksToFile(updatedTasks);
+    await writeTasksToFile(updatedTasks);
     console.log(`[Cron] Updated task ${taskId} lastPingTimestamp to ${newTimestamp}`);
 }
 
@@ -90,12 +93,23 @@ export async function GET(request: NextRequest) {
     const tasksDueForPing: RecurringTask[] = [];
 
     for (const task of recurringTasks) {
+      // Reset checkedUntil if the interval has passed
+      if (task.checkedUntil > 0 && now >= task.checkedUntil) {
+        task.checkedUntil = 0;
+        // Update the task in storage
+        const tasks = await readTasksFromFile();
+        const updatedTasks = tasks.map(t => 
+          t.id === task.id ? { ...t, checkedUntil: 0 } : t
+        );
+        await writeTasksToFile(updatedTasks);
+      }
+
       // Convert recurrenceDays to milliseconds
       const recurrenceMs = task.recurrenceDays * 24 * 60 * 60 * 1000;
       const nextPingDue = task.lastPingTimestamp + recurrenceMs;
 
-      // Check if the current time is past the next due time
-      if (now >= nextPingDue) {
+      // Check if the current time is past the next due time and task is not checked off
+      if (now >= nextPingDue && (task.checkedUntil === 0 || now >= task.checkedUntil)) {
         tasksDueForPing.push(task);
       }
     }

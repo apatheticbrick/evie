@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import '../page.css';
 
-const TaskCard = ({ task, onComplete, onUncomplete, isCompleted, onEdit }: {
-  task: { id: number; title: string; body: string };
+const TaskCard = ({ task, onComplete, onUncomplete, isCompleted, onEdit, onCancelRecurring }: {
+  task: { id: number; title: string; body: string; isRecurring?: boolean; checkedUntil?: number; recurrenceDays?: number };
   onComplete: (id: number) => void;
   onUncomplete: (id: number) => void;
   isCompleted: boolean;
   onEdit: (id: number) => void;
+  onCancelRecurring?: (id: number) => void;
 }) => {
   const [timeElapsed, setTimeElapsed] = useState('');
 
@@ -74,23 +75,56 @@ const TaskCard = ({ task, onComplete, onUncomplete, isCompleted, onEdit }: {
     onUncomplete(task.id);
   };
 
+  const handleCancelRecurringClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onCancelRecurring) {
+      onCancelRecurring(task.id);
+    }
+  };
+
+  const isRecurring = task.isRecurring || false;
+  const checkedUntil = task.checkedUntil || 0;
+  const isCheckedOff = isRecurring && checkedUntil > Date.now();
+  const isGrayedOut = isRecurring && isCheckedOff;
+
   return (
     <li
-      className={`task-card ${isCompleted ? 'completed-card' : ''}`}
+      className={`task-card ${isCompleted ? 'completed-card' : ''} ${isGrayedOut ? 'recurring-checked-off' : ''} ${isRecurring ? 'recurring-task' : ''}`}
       onClick={!isCompleted ? () => onEdit(task.id) : undefined}
     >
       <div className="card-header">
-        <h3>{task.title}</h3>
+        <h3>
+          {task.title}
+          {isRecurring && <span className="recurring-badge">🔄 Recurring</span>}
+        </h3>
       </div>
       <div className="card-body">
         <p>{task.body}</p>
+        {isRecurring && isCheckedOff && (
+          <p className="checked-off-message">
+            Checked off until {new Date(checkedUntil).toLocaleDateString()}
+          </p>
+        )}
       </div>
       <div className="card-footer">
-        {!isCompleted && <span className="timer">{timeElapsed}</span>}
+        {!isCompleted && !isCheckedOff && <span className="timer">{timeElapsed}</span>}
         {isCompleted ? (
           <button className="uncomplete-button" onClick={handleUncompleteClick}>
             Uncomplete
           </button>
+        ) : isRecurring ? (
+          <div className="recurring-task-actions">
+            {!isCheckedOff && (
+              <button className="check-off-button" onClick={handleCompleteClick}>
+                Check Off
+              </button>
+            )}
+            {onCancelRecurring && (
+              <button className="cancel-recurring-button" onClick={handleCancelRecurringClick}>
+                Cancel Recurring
+              </button>
+            )}
+          </div>
         ) : (
           <button className="complete-button" onClick={handleCompleteClick}>
             Complete

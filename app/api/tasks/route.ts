@@ -1,7 +1,7 @@
 // app/api/tasks/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'fs';
+import { promises as fs } from 'fs';
 import path from 'path';
 
 // Use /tmp for Vercel compatibility (writable directory)
@@ -14,26 +14,29 @@ interface Task {
   isRecurring: boolean;
   recurrenceDays: number;
   lastPingTimestamp: number;
+  checkedUntil: number;
 }
 
 // Helper function to read tasks from file
-function readTasksFromFile(): Task[] {
+async function readTasksFromFile(): Promise<Task[]> {
   try {
-    if (fs.existsSync(TASKS_FILE)) {
-      const data = fs.readFileSync(TASKS_FILE, 'utf-8');
-      const parsed = JSON.parse(data);
-      return parsed.tasks || [];
-    }
+    await fs.access(TASKS_FILE);
+    const data = await fs.readFile(TASKS_FILE, 'utf-8');
+    const parsed = JSON.parse(data);
+    return parsed.tasks || [];
   } catch (error) {
-    console.error('Error reading tasks file:', error);
+    // File doesn't exist or can't be read - return empty array
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error('Error reading tasks file:', error);
+    }
+    return [];
   }
-  return [];
 }
 
 // Helper function to write tasks to file
-function writeTasksToFile(tasks: Task[]): void {
+async function writeTasksToFile(tasks: Task[]): Promise<void> {
   try {
-    fs.writeFileSync(TASKS_FILE, JSON.stringify({ tasks }, null, 2), 'utf-8');
+    await fs.writeFile(TASKS_FILE, JSON.stringify({ tasks }, null, 2), 'utf-8');
   } catch (error) {
     console.error('Error writing tasks file:', error);
   }
@@ -42,7 +45,7 @@ function writeTasksToFile(tasks: Task[]): void {
 // GET: Retrieve all recurring tasks
 export async function GET(request: NextRequest) {
   try {
-    const tasks = readTasksFromFile();
+    const tasks = await readTasksFromFile();
     const recurringTasks = tasks.filter(task => task.isRecurring);
     return NextResponse.json({ tasks: recurringTasks }, { status: 200 });
   } catch (error) {
@@ -63,7 +66,7 @@ export async function POST(request: NextRequest) {
 
     // Filter to only store recurring tasks on the server
     const recurringTasks = tasks.filter((task: Task) => task.isRecurring);
-    writeTasksToFile(recurringTasks);
+    await writeTasksToFile(recurringTasks);
 
     return NextResponse.json({ ok: true, message: 'Tasks synced successfully' }, { status: 200 });
   } catch (error) {
@@ -82,13 +85,13 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid request: taskId and lastPingTimestamp required' }, { status: 400 });
     }
 
-    const tasks = readTasksFromFile();
+    const tasks = await readTasksFromFile();
     const updatedTasks = tasks.map(task => 
       task.id === taskId 
         ? { ...task, lastPingTimestamp } 
         : task
     );
-    writeTasksToFile(updatedTasks);
+    await writeTasksToFile(updatedTasks);
 
     return NextResponse.json({ ok: true, message: 'Task updated successfully' }, { status: 200 });
   } catch (error) {

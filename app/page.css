@@ -380,6 +380,74 @@ h1 {
   opacity: 0.8;
 }
 
+.recurring-task {
+  border-left: 3px solid var(--accent-blue);
+}
+
+.recurring-checked-off {
+  opacity: 0.5;
+  background-color: var(--gray-dark);
+  pointer-events: auto;
+}
+
+.recurring-checked-off .card-header h3,
+.recurring-checked-off .card-body p {
+  color: var(--gray-lighter);
+  text-decoration: line-through;
+}
+
+.recurring-badge {
+  font-size: 0.75rem;
+  color: var(--accent-blue);
+  margin-left: 8px;
+  font-weight: normal;
+}
+
+.checked-off-message {
+  font-size: 0.85rem;
+  color: var(--gray-medium);
+  font-style: italic;
+  margin-top: 10px;
+}
+
+.recurring-task-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.check-off-button {
+  background-color: var(--accent-green);
+  color: var(--text-light);
+  border: none;
+  padding: 10px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: background-color 0.2s ease-in-out;
+}
+
+.check-off-button:hover {
+  background-color: #218838;
+}
+
+.cancel-recurring-button {
+  background-color: var(--accent-red);
+  color: var(--text-light);
+  border: none;
+  padding: 10px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: background-color 0.2s ease-in-out;
+}
+
+.cancel-recurring-button:hover {
+  background-color: #8f160e;
+}
+
 /* --- Completed Tasks Section --- */
 
 .divider {
