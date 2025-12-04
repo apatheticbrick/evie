@@ -270,12 +270,6 @@ The app uses Next.js configuration to ignore TypeScript and ESLint errors during
 3. Check the bot is added to your server
 4. Verify the channel ID is correct
 
-### Tasks not persisting
-
-- Ensure browser localStorage is enabled
-- Check browser console for errors
-- Try a different browser
-
 ## Known Bugs/limitations
 
 - Some visual weirdness with the toast animation and formatting
